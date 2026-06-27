@@ -1,0 +1,196 @@
+
+<style>
+  .dash { padding: 1rem 0; font-family: var(--font-sans); }
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1.5rem; }
+  .kpi { background: var(--surface-1); border-radius: var(--radius); padding: 1rem; }
+  .kpi-label { font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
+  .kpi-val { font-size: 22px; font-weight: 500; color: var(--text-primary); margin: 0; }
+  .kpi-val span { font-size: 12px; color: var(--text-secondary); font-weight: 400; }
+  .chart-section { background: var(--surface-1); border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+  .section-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin: 0 0 1rem; }
+  .filter-note { font-size: 12px; color: var(--text-muted); margin-left: 8px; font-weight: 400; }
+  .selected-badge { display: inline-block; background: var(--bg-accent); color: var(--text-accent); font-size: 11px; padding: 2px 8px; border-radius: var(--radius); margin-left: 8px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .chart-wrap { position: relative; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; font-size: 12px; color: var(--text-secondary); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 4px; }
+</style>
+
+<div class="dash">
+  <h2 class="sr-only">Daikibo telemetry dashboard: machine downtime analysis for May 2021 across 4 factories</h2>
+
+  <div class="kpi-row">
+    <div class="kpi">
+      <p class="kpi-label">Total downtime</p>
+      <p class="kpi-val">1,030 <span>min</span></p>
+    </div>
+    <div class="kpi">
+      <p class="kpi-label">Unhealthy events</p>
+      <p class="kpi-val">103</p>
+    </div>
+    <div class="kpi">
+      <p class="kpi-label">Most affected factory</p>
+      <p class="kpi-val" style="font-size:15px;">Factory Seiko</p>
+    </div>
+    <div class="kpi">
+      <p class="kpi-label">Top failing device</p>
+      <p class="kpi-val" style="font-size:15px;">LaserWelder</p>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div class="chart-section">
+      <p class="section-label">Down time per factory <span class="filter-note">— click a bar to filter</span><span id="sel-badge" class="selected-badge" style="display:none"></span></p>
+      <div style="position:relative;height:200px;">
+        <canvas id="factoryChart" role="img" aria-label="Bar chart showing downtime by factory. Seiko 480 min, Shenzhen 420 min, Meiyo 110 min, Berlin 20 min.">Seiko: 480 min, Shenzhen: 420 min, Meiyo: 110 min, Berlin: 20 min.</canvas>
+      </div>
+    </div>
+    <div class="chart-section">
+      <p class="section-label">Down time per device type <span id="filter-context" style="font-size:12px;color:var(--text-muted);font-weight:400;">— all factories</span></p>
+      <div style="position:relative;height:200px;">
+        <canvas id="deviceChart" role="img" aria-label="Bar chart showing downtime by device type, filterable by factory.">LaserWelder: 480 min, LaserCutter: 430 min, HeavyDutyDrill: 70 min.</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="chart-section" style="margin-top:0;">
+    <p class="section-label">All factories — downtime breakdown by device</p>
+    <div style="position:relative;height:160px;">
+      <canvas id="stackedChart" role="img" aria-label="Stacked bar chart showing per-factory downtime broken down by device type.">Shows each factory's breakdown by machine type.</canvas>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const factories = ['Seiko', 'Shenzhen', 'Meiyo', 'Berlin'];
+const factoryColors = ['#e34948','#eda100','#2a78d6','#1baf7a'];
+const factoryData = [480, 420, 110, 20];
+
+const deviceAll = {
+  'LaserWelder': 480, 'LaserCutter': 430, 'HeavyDutyDrill': 70,
+  'Furnace': 20, 'SpotWelder': 10, 'CNC': 10, 'ConveyorBelt': 10
+};
+
+const byFactory = {
+  'Seiko':    { LaserWelder: 480 },
+  'Shenzhen': { LaserCutter: 390, CNC: 10, ConveyorBelt: 10, SpotWelder: 10 },
+  'Meiyo':    { HeavyDutyDrill: 70, LaserCutter: 40 },
+  'Berlin':   { Furnace: 20 }
+};
+
+const allDevices = Object.keys(deviceAll);
+const devColors  = ['#e34948','#eda100','#2a78d6','#1baf7a','#4a3aa7','#e87ba4','#eb6834'];
+
+let selectedFactory = null;
+
+function getDeviceData(factory) {
+  if (!factory) return allDevices.map(d => deviceAll[d]);
+  return allDevices.map(d => byFactory[factory][d] || 0);
+}
+
+const isDark = matchMedia('(prefers-color-scheme:dark)').matches;
+const gridColor  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)';
+const tickColor  = isDark ? '#898781' : '#898781';
+const labelColor = isDark ? '#c3c2b7' : '#52514e';
+
+const factoryChart = new Chart(document.getElementById('factoryChart'), {
+  type: 'bar',
+  data: {
+    labels: factories,
+    datasets: [{
+      label: 'Down time (min)',
+      data: factoryData,
+      backgroundColor: factoryColors.map(c => c + 'cc'),
+      borderColor: factoryColors,
+      borderWidth: 1.5,
+      borderRadius: 4,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    onClick(evt, els) {
+      if (!els.length) { selectedFactory = null; updateDeviceChart(null); return; }
+      const f = factories[els[0].index];
+      selectedFactory = selectedFactory === f ? null : f;
+      updateDeviceChart(selectedFactory);
+    },
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} min downtime` } } },
+    scales: {
+      x: { ticks: { color: tickColor, font: { size: 12 } }, grid: { display: false } },
+      y: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor }, title: { display: true, text: 'minutes', color: labelColor, font: { size: 11 } } }
+    }
+  }
+});
+
+const deviceChart = new Chart(document.getElementById('deviceChart'), {
+  type: 'bar',
+  data: {
+    labels: allDevices,
+    datasets: [{
+      label: 'Down time (min)',
+      data: getDeviceData(null),
+      backgroundColor: devColors.map(c => c + 'cc'),
+      borderColor: devColors,
+      borderWidth: 1.5,
+      borderRadius: 4,
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} min downtime` } } },
+    scales: {
+      x: { ticks: { color: tickColor, font: { size: 10 }, maxRotation: 35, autoSkip: false }, grid: { display: false } },
+      y: { ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor } }
+    }
+  }
+});
+
+function updateDeviceChart(factory) {
+  deviceChart.data.datasets[0].data = getDeviceData(factory);
+  deviceChart.update();
+  const badge = document.getElementById('sel-badge');
+  const ctx = document.getElementById('filter-context');
+  if (factory) {
+    badge.textContent = factory; badge.style.display = 'inline-block';
+    ctx.textContent = `— filtered: ${factory}`;
+    factoryChart.data.datasets[0].backgroundColor = factories.map((f,i) =>
+      f === factory ? factoryColors[i] : factoryColors[i] + '44');
+    factoryChart.update();
+  } else {
+    badge.style.display = 'none';
+    ctx.textContent = '— all factories';
+    factoryChart.data.datasets[0].backgroundColor = factoryColors.map(c => c + 'cc');
+    factoryChart.update();
+  }
+}
+
+const stackedDevices = ['LaserWelder','LaserCutter','HeavyDutyDrill','Furnace','CNC','ConveyorBelt','SpotWelder'];
+const stackedColors  = ['#e34948','#eda100','#2a78d6','#1baf7a','#4a3aa7','#e87ba4','#eb6834'];
+
+new Chart(document.getElementById('stackedChart'), {
+  type: 'bar',
+  data: {
+    labels: factories,
+    datasets: stackedDevices.map((dev, i) => ({
+      label: dev,
+      data: factories.map(f => byFactory[f][dev] || 0),
+      backgroundColor: stackedColors[i] + 'cc',
+      borderColor: stackedColors[i],
+      borderWidth: 1,
+      borderRadius: 2,
+    }))
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: true, position: 'right', labels: { color: labelColor, font: { size: 11 }, boxWidth: 10, padding: 8 } },
+      tooltip: { mode: 'index', intersect: false }
+    },
+    scales: {
+      x: { stacked: true, ticks: { color: tickColor, font: { size: 12 } }, grid: { display: false } },
+      y: { stacked: true, ticks: { color: tickColor, font: { size: 11 } }, grid: { color: gridColor }, title: { display: true, text: 'minutes', color: labelColor, font: { size: 11 } } }
+    }
+  }
+});
+</script>
